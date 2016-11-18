@@ -1,0 +1,23 @@
+compile
+compile -Ylog-classpath
+run -Ylog-classpath
+exit
+compile
+build
+rebuild
+sbt
+run -Ylog-classpath
+compile
+exit
+compile
+run
+exit
+compile
+exit
+compile
+run
+exit
+compile
+exit
+compile
+run
