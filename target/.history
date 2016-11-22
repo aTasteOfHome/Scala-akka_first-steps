@@ -21,3 +21,35 @@ compile
 exit
 compile
 run
+compile
+run
+compile
+run
+compile
+compile -deprecation
+run -deprecation
+compile
+run
+compile
+run
+compile
+run
+compile
+run
+compile
+run
+compile
+run
+compile
+compile -deprecation
+-deprecation
+clean
+compile-deprecation
+compile -deprecation
+compile
+exit
+compile
+run
+compile
+run
+clean

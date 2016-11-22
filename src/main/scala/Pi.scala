@@ -3,16 +3,15 @@ import akka.routing._
 import scala.concurrent.duration.Duration
 import scala.concurrent.duration._
 
-sealed trait PiMessage
-case object Calculate extends PiMessage
-case class Work(start: Int, numElems: Int) extends PiMessage
-case class Result(value: Double) extends PiMessage
-case class PiApproximation(pi: Double, duration: Duration)
-
-
 object Pi extends App {
 
 	calculate(numWorkers = 4, numElems = 10000, numMsgs = 10000)
+
+	sealed trait PiMessage
+	case object Calculate extends PiMessage
+	case class Work(start: Int, numElems: Int) extends PiMessage
+	case class Result(value: Double) extends PiMessage
+	case class PiApproximation(pi: Double, duration: Duration)
 
 	//actors and messages
 
@@ -39,101 +38,109 @@ object Pi extends App {
 		//to kick off calculation
 		master ! Calculate
 	}	
-}
 
 
-class PiWorker extends Actor {
+	class PiWorker extends Actor {
 
-	//method to receive messages
-	def receive = {
+		//method to receive messages
+		def receive = {
 
-		//when you receive a message that is of class "Work",
-		//return a Result object.
-		//the sender means you send the message back to sender
-		//the "!" means you fire-and-forget, or send it async,
-		//	no promises needed
-		case Work(start, numElems) =>
-			sender ! Result(calculatePiFor(start, numElems))
-	}
+			//when you receive a message that is of class "Work",
+			//return a Result object.
+			//the sender means you send the message back to sender
+			//the "!" means you fire-and-forget, or send it async,
+			//	no promises needed
+			case Work(start, numElems) =>
+				sender() ! Result(calculatePiFor(start, numElems))
+			case _ 	=> println("PiWorker received unknown message")
 
-	def calculatePiFor(start: Int, numElems: Int): Double = {
-
-	  var acc = 0.0
-	  for (i <- start until (start + numElems)){
-	  	acc += 4.0 * (1 - (i % 2) * 2) / (2 * i + 1)
-	  }
-	  acc
-	}
-}
-
-//the ActorRef passed in to the PiMaster actor will be used to report
-//the final answer
-class PiMaster(numWorkers: Int, numMsgs: Int, 
-	numElems: Int, listener: ActorRef)
-	extends Actor {
-
-
-
-	var pi: Double = _
-	var numResults: Int = _
-	val start: Long = System.currentTimeMillis
-
-	//handles routing with round robin.
-
-	var router = {
-		val routees = Vector.fill(numWorkers) {
-			val r = context.actorOf(Props[PiWorker])
-			context watch r
-			ActorRefRoutee(r)
+			println("received")
 		}
 
-		Router(RoundRobinRoutingLogic(), routees)
+		def calculatePiFor(start: Int, numElems: Int): Double = {
+
+		  var acc = 0.0
+		  for (i <- start until (start + numElems)){
+		  	acc += 4.0 * (1 - (i % 2) * 2) / (2 * i + 1)
+		  }
+		  acc
+		}
 	}
 
-	// val workerRouter = context.actorOf(
-	// 	Props[PiWorker].withRouter(RoundRobinRouter(numWorkers)),
-	// 	name = "workerRouter")
+	//the ActorRef passed in to the PiMaster actor will be used to report
+	//the final answer
+	class PiMaster(numWorkers: Int, numMsgs: Int, 
+		numElems: Int, listener: ActorRef)
+		extends Actor {
 
-	//handle message
-	//needs to handle:
-	//	a calculate message, which starts the calculation
-	//		and sends Work messages to workers via the router
-	//	a Result message, after the workers calculate the different
-	//		parts of pi
-	def receive = {
-		//if received a Calculate message,
-		//async send Work messages to workers using
-		//	worker router
-		case Calculate => {
-			for(i <- 0 until numMsgs){
-				router.route(Work(i*numElems, numElems), sender())
-				// workerRouter ! Work(i*numElems, numElems)
+
+
+		var pi: Double = _
+		var numResults: Int = _
+		val start: Long = System.currentTimeMillis
+
+		//handles routing with round robin.
+		var router = {
+			val routees = Vector.fill(numWorkers) {
+				val r = context.actorOf(Props[PiWorker])
+				context watch r
+				ActorRefRoutee(r)
 			}
+
+			Router(RoundRobinRoutingLogic(), routees)
 		}
 
-		//if receieved Result message, aggregate results.
-		//if all workers are done, send result to listener.
-		case Result(value) => {
-			pi += value
-			numResults += 1
-			if(numResults == numMsgs){
-				listener ! PiApproximation(pi, 
-					duration = (System.currentTimeMillis-start).millis)
+		val workerRouter: ActorRef = context.actorOf(
+			RoundRobinPool(numWorkers).props(Props[PiWorker]), 
+			"workerRouter")
 
-				//stops this actor and its (supervised) children
-				context.stop(self)
+		// val workerRouter = context.actorOf(
+		// 	Props[PiWorker].withRouter(RoundRobinRouter(numWorkers)),
+		// 	name = "workerRouter")
+
+		//handle message
+		//needs to handle:
+		//	a calculate message, which starts the calculation
+		//		and sends Work messages to workers via the router
+		//	a Result message, after the workers calculate the different
+		//		parts of pi
+		def receive = {
+			//if received a Calculate message,
+			//async send Work messages to workers using
+			//	worker router
+			case Calculate => {
+				for(i <- 0 until numMsgs){
+					workerRouter ! Work(i*numElems, numElems)
+				}
 			}
+
+			//if receieved Result message, aggregate results.
+			//if all workers are done, send result to listener.
+			case Result(value) => {
+				pi += value
+				numResults += 1
+				if(numResults == numMsgs){
+					listener ! PiApproximation(pi, 
+						duration = (System.currentTimeMillis-start).millis)
+
+					//stops this actor and its (supervised) children
+					context.stop(self)
+				}
+			}
+
+			case _	=> println("PiMaster received unknown message")
 		}
-
 	}
-}
 
-class PiListener extends Actor {
-	def receive = {
-		case PiApproximation(pi, duration) => {
-			println("\n\tPi approximation: \t\t%s\n\tCalculation time: \t%s"
-				.format(pi, duration))
-      		context.system.shutdown()
+	class PiListener extends Actor {
+		def receive = {
+			case PiApproximation(pi, duration) => {
+				println("\n\tPi approximation: \t\t%s\n\tCalculation time: \t%s"
+					.format(pi, duration))
+	      		context.system.shutdown()
+			}
+
+			case _	=> println("received unknown message")
 		}
 	}
 }
